@@ -1,2 +1,4 @@
-# no_confidence_lasso
-lasso confidence interval w/ bootstrap
+# This repo contains code to reproduce the simulations in 
+
+File descriptions
+* Simulation. This includes the simulation code.
