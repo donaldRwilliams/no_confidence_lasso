@@ -1,0 +1,282 @@
+---
+title: "regression_exp_1"
+author: "Donny Williams"
+date: "3/14/2021"
+output: html_document
+---
+
+# Packages
+```{r}
+library(boot)
+library(cowplot)
+library(glmnet)
+```
+
+# Regularized
+```{r}
+# true betas
+betas <- c(seq(0.1, 1, 0.1), rep(0, 10))
+
+
+boot_func <- function(data, i, gamma, lambda){
+  
+  d <- data[i,]
+  
+  y <- d[,1]
+  
+  X <- d[,-1]
+  # fit lasso
+  fit <- glmnet::glmnet(X, y)
+  
+  # the number of lambdas
+  n_lambda <- length(fit$lambda)
+  
+  # compute BIC for each lambda
+  
+  BIC <- lapply(1:n_lambda, function(x) {
+    
+    pred <- glmnet::predict.glmnet(fit, 
+                                   newx = X, 
+                                   s = fit$lambda[x])
+    
+    # residual sum of squares
+    RSS <- sum((pred - y)^2)
+    
+    # number of observations
+    n <- length(y)
+    
+    # number of predictors
+    p <- ncol(X)
+    # BIC (or EBIC if gamma > 0)
+    BIC <- n * log(RSS/n) + fit$df[x] * log(n) + 4 * fit$df[x] * gamma * log(p)
+    
+    # return BIC
+    BIC
+    
+  })
+  
+  # selected betas
+  beta_selected <- fit$beta[,which.min(BIC)]
+  
+  # return selected betas
+  beta_selected
+  
+}
+
+# number of clusters
+cl <- parallel::makeCluster(4)
+
+# simulation trials
+iter <- 500
+
+# matrix for storage (only non-zero)
+mat <- matrix(0, iter, 10)
+
+# sample sizes
+n <- c(250, 500, 1000)
+
+# additions to BIC
+gamma <- c(0, 0.5, 1)
+
+# storage
+ls_j <- list()
+ls_g <- list()
+
+for(j in 1:3){
+  
+  for(g in 1:3){
+
+  for(i in 1:iter){
+  
+  message(paste0("sample size = ", n[j], "; gamma = ", gamma[g], "; iter = ", i))
+  
+  X <- MASS::mvrnorm(n[j], rep(0, 20), diag(20))
+  
+  # SNR = 1
+  sigma <- sqrt(as.numeric(crossprod(betas, diag(20) %*% betas) / 1))
+  
+  y <- X %*% betas + rnorm(n[j], 0, sigma)
+  
+  dat <- cbind(y, X)
+  
+  boot_res <- boot(data = dat, 
+              statistic = boot_func, 
+              R = 500, 
+              gamma = gamma[g],
+              ncpus = 8, cl = cl,
+              parallel = "snow")
+
+  
+  # 90 % CIs
+  cis <-  as.data.frame(
+    t(apply(boot_res$t,MARGIN = 2, quantile, c(0.05, 0.95)))[1:10,]
+    )
+
+  cis$betas <- betas[1:10]
+  
+  # coverage
+  mat[i,] <- ifelse(cis[,1] < betas[1:10] & 
+                    cis[,2] > betas[1:10], 1, 0)
+  
+  }
+    # summary after all simulation trials 
+    res_dat <- data.frame(
+      coverage = colMeans(mat), 
+      betas = betas[1:10], 
+      gamma = gamma[g])
+    
+    # res_dat$gamma <- gamma[g]
+    # store
+    ls_g[[g]] <- res_dat
+    }
+  
+  ls_j[[j]] <- data.frame(
+    do.call(rbind.data.frame, ls_g), 
+    n = n[j]
+    )
+  
+}
+
+ideal_situation <- ls_j
+save(ideal_situation, file = "ideal_situation.Rda")
+```
+
+
+# Non-Regularized
+```{r}
+boot_lm <- function(data, i){
+  
+  d <- data[i,]
+  
+  y <- d[,1]
+  
+  X <- d[,-1]
+  
+  coef(lm(y ~ X))[-1]
+  
+}
+
+mat <- matrix(0, iter, 10)
+
+n <- c(250, 500, 1000)
+
+ls_j <- list()
+
+for(j in 1:3){
+    
+    for(i in 1:iter){
+      
+      message(paste0("sample size = ", n[j], "; iter = ", i))
+      
+      X <- MASS::mvrnorm(n[j], rep(0, 20), diag(20))
+      
+      # SNR = 1
+      sigma <- sqrt(as.numeric(crossprod(betas, diag(20) %*% betas) / 1))
+      
+      y <- X %*% betas + rnorm(n[j], 0, sigma)
+      
+      dat <- cbind(y, X)
+      
+      
+      boot_res <- boot(data = dat,
+                       statistic = boot_lm,
+                       R = 500)
+      
+      # cis
+      cis <-  as.data.frame(t(apply(
+        boot_res$t, MARGIN = 2, quantile, c(0.05, 0.95)
+      ))[1:10, ])
+      
+      cis$betas <- betas[1:10]
+      
+      mat[i,] <- ifelse(cis[,1] < betas[1:10] & 
+                          cis[,2] > betas[1:10], 1, 0)
+      }
+    
+  res_dat <- data.frame(coverage = colMeans(mat), 
+                          betas = betas[1:10], 
+                          n = n[j])
+    ls_j[[j]] <- res_dat
+}
+
+ideal_situation_lm <- ls_j
+save(ideal_situation_lm, file = "ideal_situation_lm.Rda")
+```
+
+# Make Figure: 2B
+```{r}
+load(file = "ideal_situation.Rda")
+load(file = "ideal_situation_lm.Rda")
+
+
+dat_new <- rbind.data.frame(
+do.call(rbind.data.frame, ideal_situation) , 
+dat_lm) 
+
+dat_new$gamma_new <- factor(as.factor(dat_new$gamma), 
+                          levels = c(1,0.5,0, 2),
+                          labels =c(1,0.5,0,2))
+ 
+dat_new$n <- as.factor(dat_new$n) 
+
+plot_1B <-
+ggplot(dat_new,
+       aes(
+         x = as.factor(n),
+         y = coverage,
+         fill = as.factor(gamma_new)
+       )) +
+  geom_blank() +
+  geom_hline(yintercept = 0.90, alpha = 0.5) +
+  annotate(geom = "rect", 
+           xmin = -Inf, 
+           xmax = 1.5, 
+           ymin = -Inf, 
+           ymax = Inf, 
+           fill = "grey97", 
+           alpha = 0.25)  +
+  annotate(geom = "rect", 
+           xmin = 2.5, 
+           xmax = Inf, 
+           ymin = -Inf, 
+           ymax = Inf, 
+           fill = "grey97", 
+           alpha = 0.25)  +
+   annotate(geom = 'segment', 
+            x = 1.5, 
+            xend = 1.5, 
+            y = -Inf, 
+            yend = Inf, 
+            linetype = "dotted", 
+            alpha = 0.1) +
+  annotate(geom = 'segment', 
+           x = 2.5, 
+           xend = 2.5, 
+           y = -Inf, 
+           yend = Inf, 
+           linetype ="dotted", 
+           alpha = 0.1) +
+  geom_point(position =  position_jitterdodge(seed = 1,
+                                              jitter.width = 0.5,
+                                              jitter.height = 0,
+                                              dodge.width = 1),
+              alpha = 0.5) +
+    geom_boxplot(position = position_dodge(1), outlier.shape = NA) +
+  scale_y_continuous(limits = c(0.10, 1),
+                     breaks = seq(0.1,1,0.1)) +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+         legend.position = "top", 
+         panel.grid = element_blank()) +
+  ylab("Coverage") +
+  xlab("Sample Size") +
+  scale_fill_manual(
+    values = c("#CC79A7",  "#0072B2", "#009E73", "#999999"),
+    labels = c(
+      expression(gamma ~ "= 1"),
+      expression(gamma ~ "= 0.5"),
+      expression(gamma ~ "= 0"),
+      "Non-reg"
+    )
+    
+```
