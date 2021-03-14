@@ -10,9 +10,12 @@ output: html_document
 library(boot)
 library(cowplot)
 library(glmnet)
+library(ggplot2)
+library(dplyr)
 ```
 
-# Regularized
+# Plot 1B
+## Regularized
 ```{r}
 # true betas
 betas <- c(seq(0.1, 1, 0.1), rep(0, 10))
@@ -142,8 +145,11 @@ save(ideal_situation, file = "ideal_situation.Rda")
 ```
 
 
-# Non-Regularized
+## Non-Regularized
 ```{r}
+# true betas
+betas <- c(seq(0.1, 1, 0.1), rep(0, 10))
+
 boot_lm <- function(data, i){
   
   d <- data[i,]
@@ -203,19 +209,25 @@ ideal_situation_lm <- ls_j
 save(ideal_situation_lm, file = "ideal_situation_lm.Rda")
 ```
 
-# Make Figure: 2B
+## Make Figure: Figure 2B
 ```{r}
 load(file = "ideal_situation.Rda")
 load(file = "ideal_situation_lm.Rda")
 
+dat_lm <- do.call(rbind.data.frame, ideal_situation_lm)
+# dummy gamma value
+dat_lm$gamma <- 2
 
+# combine lasso and non-reg
 dat_new <- rbind.data.frame(
 do.call(rbind.data.frame, ideal_situation) , 
 dat_lm) 
 
-dat_new$gamma_new <- factor(as.factor(dat_new$gamma), 
-                          levels = c(1,0.5,0, 2),
-                          labels =c(1,0.5,0,2))
+dat_new$gamma_new <- factor(
+  as.factor(dat_new$gamma), 
+  levels = c(1,0.5,0, 2),
+  labels =c(1,0.5,0,2)
+  )
  
 dat_new$n <- as.factor(dat_new$n) 
 
@@ -277,6 +289,134 @@ ggplot(dat_new,
       expression(gamma ~ "= 0.5"),
       expression(gamma ~ "= 0"),
       "Non-reg"
+    ))
+    
+```
+
+# Plot 1C
+## Simulation
+```{r}
+# true betas
+betas <- c(seq(0.1, 1, 0.1), rep(0, 10))
+
+l1_fixed <- function(data, i, lambda){
+  
+  d <- data[i,]
+  
+  y <- d[,1]
+  
+  X <- d[,-1]
+  
+  fit <- glmnet::glmnet(X, y, lambda = lambda)
+  
+  as.matrix(coef(fit))[-1,]
+
+}
+
+iter <- 1000
+
+ls_l <- list()
+
+lambda <- c(0, seq(0.01, 2, 
+              length.out = 19)) * sqrt(log(20)/ 1000)
+
+lambda <- round(lambda, 3)
+
+cl <- parallel::makeCluster(8)
+
+mat <- matrix(0, nrow = iter, ncol = 20)
+
+for(l in 1:length(lambda)) {
+  for (i in 1:iter) {
+    message("lambda = ", l, "; iter = ", i)
+    
+    X <- MASS::mvrnorm(1000, rep(0, 20), diag(20))
+    
+    sigma <- sqrt(as.numeric(crossprod(betas, diag(20) %*% betas) / 1))
+    
+    y <- X %*% betas + rnorm(1000, 0, sigma)
+    
+    dat <- cbind(y, X)
+    
+    l1 <- boot(
+      data = dat,
+      statistic = l1_fixed,
+      R = 500,
+      lambda = lambda[l],
+      ncpus = 8,
+      cl = cl,
+      parallel = "snow"
     )
     
+    
+    l1_cis <-  as.data.frame(t(apply(l1$t, MARGIN = 2, quantile, c(0.05,   0.95))))
+    
+    mat[i, ] <- ifelse(l1_cis[, 1] <= betas &
+                         l1_cis[, 2] >= betas, 1, 0)
+    
+  }
+  res_dat <- data.frame(coverage = colMeans(mat),
+                        betas = betas,
+                        lambda = lambda[l])
+  ls_l[[l]] <- res_dat
+}
+
+tc_lambda <- ls_l
+save(tc_lambda, file = "tc_lambda.Rda")
+```
+
+## Make Figure: Figure 2C
+```{r}
+load(file =  "tc_lambda.Rda")
+
+
+plot_1C <-
+  do.call(rbind.data.frame, tc_lambda) %>%
+  mutate(beta_new =
+           rep(c(betas[1:10], 0, seq(
+             0.001, 0.011, length.out = 9
+           )), 20),
+         lwd = rep(c(betas[1:10] , rep(0, 10)), 20)) %>%
+  ggplot(aes(
+    x = as.factor(lambda),
+    y = coverage,
+    group = (beta_new),
+    color = (beta_new)
+  )) +
+  geom_blank() +
+  geom_hline(yintercept = 0.90, alpha = 0.5) +
+  geom_line(size = 1.5, alpha = 0.75) +
+  scale_y_continuous(limits = c(0.4, 1),
+                     breaks = seq(0.4, 1, 0.1)) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "top") +
+  scale_color_gradient(
+    low = "black",
+    high = "grey",
+    breaks = seq(0, 1, 0.1),
+    name = expression(beta ~ "  ")
+  ) +
+  ylab("Coverage") +
+  guides(colour = guide_colorbar(
+    title.hjust = 0.5,
+    title.vjust = 0.75,
+    barwidth = 12,
+    ticks.lineheight = 1.5
+  ))  +
+  xlab("Regularization") +
+  scale_x_discrete(
+    labels = c(
+      "Non-reg",
+      rep("", 3),
+      expression("0.35\U00B7" * lambda[TC]),
+      rep("", 5),
+      expression(lambda[TC]),
+      rep("", 4),
+      expression("1.55\U00B7" * lambda[TC]),
+      rep("", 3),
+      expression("2\U00B7" * lambda[TC])
+    ),
+    guide = guide_axis(angle = 55)
+  ) 
 ```
