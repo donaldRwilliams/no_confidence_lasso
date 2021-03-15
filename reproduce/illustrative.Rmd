@@ -1,0 +1,230 @@
+---
+title: "illustrative"
+author: "Donald R. Williams"
+date: "3/14/2021"
+output: html_document
+---
+
+# Packages
+```{r}
+library(ggplot2)
+# must be dev version
+library(GGMncv)
+library(dplyr)
+library(cowplot)
+library(BGGM)
+```
+
+# Data
+```{r}
+Y <- BGGM::ptsd[,1:10]
+```
+
+
+# L1 Regularization
+```{r}
+l1_boot <- matrix(0, 1000, 45)
+
+for (i in 1:1000) {
+  print(i)
+  Yb <- Y[sample(1:221, size = 221, replace = TRUE), ]
+  cors <- cor(Yb, method = "spearman")
+  l1_boot[i, ] <-  GGMncv::ggmncv(cors,
+                                  n = 221,
+                                  penalty = "lasso",
+                                  progress = FALSE)$P[upper.tri(diag(10))]
+}
+
+# select network
+l1_net <- GGMncv::ggmncv(
+  cor(Y, method = "spearman"),
+  n = 221,
+  n_lambda = 100,
+  penalty = "lasso",
+  progress = FALSE,
+  ic = "ebic",
+  ebic_gamma = 0.5,
+)
+
+# order of proportion selected
+pr_order <- reshape::melt(as.matrix(l1_boot)) %>% 
+  group_by(X2) %>%
+  summarise(mu = mean(value)) %>%
+  arrange(mu) %>% .$X2
+
+reg_edges <-
+  reshape::melt(as.matrix(l1_boot)) %>%
+  mutate(
+    new = factor(X2,
+                 levels = pr_order,
+                 labels = pr_order),
+    col = ifelse(value == 0, "zero", "nonzero")
+  ) %>%
+  ggplot(aes(
+    x = new,
+    color = col,
+    y = value,
+    group = new
+  )) +
+  geom_blank() +
+  geom_point(
+    shape = 15,
+    position =  position_jitterdodge(
+      seed = 1,
+      jitter.width = 0.25,
+      jitter.height = 0,
+      dodge.width = 1
+    ),
+    alpha = 0.05
+  ) +
+  coord_flip() +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    panel.grid = element_blank(),
+    axis.text.y = element_blank()
+  ) +
+  annotate(
+    geom = "text",
+    label = round(colMeans(l1_boot != 0)[pr_order], 2),
+    y = -0.35,
+    x = 1:45,
+    size = 2
+  ) +
+  xlab("Ordered Relation") +
+  ylab("Data-Mined Edge Weights") +
+  scale_color_manual(values = c("#E69F00", "#D55E00"))
+
+
+reg_net <- plot(get_graph(l1_net),
+                edge_magnify = 7,
+                node_size = 7) +
+  theme_bw() +
+  theme(
+    panel.border = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = margin(.5, .5, .5, .5, "cm")
+  ) +
+  scale_y_continuous(limits = c(-0.05, 1.05)) +
+  scale_x_continuous(limits = c(-0.05, 1.05)) +
+  ylab("") +
+  xlab("")
+
+# top
+top <-
+  cowplot::plot_grid(reg_net,
+                     NULL,
+                     reg_edges,
+                     rel_widths = c(1.15, 0.20, 1),
+                     nrow = 1) 
+
+```
+
+
+# Non Regularization
+```{r}
+nonreg_boot <- matrix(0, 1000, 45)
+
+for (i in 1:1000) {
+  print(i)
+  Yb <- Y[sample(1:221, size = 221, replace = TRUE), ]
+  cors <-  cor(Yb, method = "spearman")
+  nonreg_boot[i,] <- corpcor::cor2pcor(cors)[upper.tri(diag(10))]
+}
+
+# non reg cis for detecting edges
+cis_nonreg <- as.data.frame(t(apply(
+  nonreg_boot, MARGIN = 2, quantile, c(0.025, 0.50, 0.975)
+)))
+
+cis_nonreg$sig <-
+  ifelse(cis_nonreg$`2.5%` < 0 & cis_nonreg$`97.5%` > 0, 0, 1)
+
+cis_nonreg$index <- 1:45
+cis_nonreg$index <- factor(
+  cis_nonreg$index,
+  levels =  order(cis_nonreg$`50%`),
+  labels =  order(cis_nonreg$`50%`)
+)
+
+nonreg_edges <-
+  ggplot(cis_nonreg, aes(x = index,
+                         y = `50%`)) +
+  
+  annotate(
+    "rect",
+    ymin = -0.1,
+    ymax = 0.1,
+    xmin = -Inf,
+    xmax = Inf,
+    alpha = 0.35,
+    fill = "grey90"
+  ) +
+  geom_hline(yintercept = 0,
+             linetype = "dotted",
+             alpha = 0.25) +
+  geom_errorbar(aes(
+    ymin = `2.5%`,
+    ymax = `97.5%`,
+    color = as.factor(sig)
+  ),
+  width = 0) +
+  geom_point(size = 2.5, alpha = 0.5) +
+  geom_point(size = 2, alpha = 1) +
+  coord_flip() +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "none"
+  ) +
+  xlab("Ordered Relation") +
+  ylab("95% Confidence Intervals") +
+  scale_color_manual(values = c("#999999",
+                                "#CC79A7"))
+
+# dummy plot to use ggmncv plotting function
+ls <- list()
+P <- matrix(0, 10, 10)
+P[upper.tri(P)] <- cis_nonreg$`50%` * cis_nonreg$sig
+ls$P <- as.matrix(Matrix::forceSymmetric(P))
+class(ls) <- "graph"
+
+nonreg_net <-
+  plot(ls,
+       edge_magnify = 7,
+       node_size = 7) +
+  theme_bw() +
+  theme(
+    panel.border = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = margin(.5, .5, .5, .5, "cm")
+  ) +
+  scale_y_continuous(limits = c(-0.05, 1.05)) +
+  scale_x_continuous(limits = c(-0.05, 1.05)) +
+  ylab("") +
+  xlab("")
+
+
+bottom <-
+  cowplot::plot_grid(
+    nonreg_net,
+    NULL,
+    nonreg_edges,
+    rel_widths = c(1.15, 0.20, 1),
+    nrow = 1
+  ) 
+```
+
+# Combine plots
+```{r}
+cowplot::plot_grid(top,
+                   NULL,
+                   bottom,
+                   nrow = 3,
+                   rel_heights = c(1, 0.1, 1))
+```
