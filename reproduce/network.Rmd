@@ -6,6 +6,254 @@ output: html_document
 ---
 
 ```{r}
-1+1
+library(GGMncv)
+library(corpcor)
+library(boot)
+library(ggplot2)
+library(dplyr)
 ```
 
+# Plot 3B
+## Simulation
+```{r}
+# glasso
+reg_func <- function(data, i, ic,...){
+  
+  d <- data[i,]
+  
+  n <- nrow(d)
+  
+  fit <- GGMncv::ggmncv(cor(d),  
+                        n = n, 
+                        ic = ic,
+                        penalty = "lasso",
+                        progress = FALSE,...)
+  
+  fit$P[upper.tri(diag(ncol(d)))]
+
+}
+
+# sample covariance matrix
+nonreg_func <- function(data, i){
+  
+  d <- data[i,]
+  
+  corpcor::cor2pcor(cor(d))[upper.tri(diag(ncol(d)))]
+  
+}
+
+# PTSD data
+Yorig <- BGGM::ptsd[,1:20]
+
+# PTSD correlations
+S <- cor(Yorig)
+
+# PTSD partial correlations
+pcors <- corpcor::cor2pcor(S)
+
+# set to zero (true network)
+true_pcors <- ifelse(abs(pcors) < 0.05, 0, pcors)
+
+# true correlation matrix
+S <- corpcor::pcor2cor(true_pcors)
+
+# id of non-zeros
+which_edges <- which(true_pcors[upper.tri(true_pcors)] != 0)
+
+# true edges
+edges <- true_pcors[upper.tri(true_pcors)][which_edges]
+
+
+
+cl <- parallel::makeCluster(8)
+
+n <-  c(
+  250, 500, 1000, 2500, 10000, 25000, 50000
+  )
+
+iter <- 5
+
+mat_ebic <- matrix(0, nrow = iter, length(edges))
+mat_bic <- matrix(0, nrow = iter, length(edges))
+mat_nonreg <- matrix(0, nrow = iter, length(edges))
+
+res_j <- list()
+
+for(j in 1:length(n)){
+  for(i in 1:iter){
+    
+    message(paste0("sample size = ", n[j], "; iter = ", i))
+    
+    Y <- MASS::mvrnorm(n = n[j], rep(0, 20), Sigma = S)
+
+    reg_ebic <- boot(data = Y, 
+                statistic = reg_func, 
+                R = 500, 
+                ic = "ebic",
+                ncpus = 8, 
+                cl = cl,
+                parallel = "snow")
+    
+    reg_bic <- boot(data = Y,
+                statistic = reg_func,
+                R = 500,
+                ic = "ebic", 
+                ebic_gamma = 0,
+                ncpus = 8, cl = cl,
+                parallel = "snow")
+
+
+nonreg <- boot(data = Y, 
+                statistic = nonreg_func, 
+                R = 500, 
+                ncpus = 8, cl = cl,
+                parallel = "snow")
+
+
+ebic_cis <- as.data.frame(
+  t(apply(reg_ebic$t[,which_edges], 2,quantile, 
+          probs = c(0.05, 0.95)))
+  )
+
+bic_cis <- as.data.frame(
+  t(apply(reg_bic$t[,which_edges], 2, 
+          quantile, probs = c(0.05, 0.95)))
+)
+
+nonreg_cis <- as.data.frame(
+  t(apply(nonreg$t[,which_edges], 2,quantile, 
+          probs = c(0.05, 0.95)))
+)
+
+mat_ebic[i,] <- ifelse(ebic_cis$`5%` < edges & ebic_cis$`95%` > edges, 1, 0 )
+mat_bic[i,] <- ifelse(bic_cis$`5%` < edges & bic_cis$`95%` > edges, 1, 0 )
+mat_nonreg[i,] <- ifelse(nonreg_cis$`5%` < edges & nonreg_cis$`95%` > edges,1,0 )
+
+}
+
+results <- rbind.data.frame(
+data.frame(model = "ebic", cover =  rowMeans(mat_ebic)),
+data.frame(model = "bic", cover =  rowMeans(mat_bic)),
+data.frame(model = "nonreg", cover =  rowMeans(mat_nonreg))
+)
+results$n <- n[j]
+res_j[[j]] <- results
+}
+
+# commented out to prevent overwriting
+# files in the folder
+
+# ave_coverage <- res_j
+# save(ave_coverage, file = "ave_coverage.Rda")
+```
+
+
+## Make Figure: Figure 3B
+```{r}
+load("ave_coverage.Rda")
+
+plot_3B <-
+  do.call(rbind.data.frame, ave_coverage) %>%
+  group_by(model, n) %>%
+  summarise(
+    mu = mean(cover),
+    ub = max(cover),
+    lb = min(cover),
+    sd = sd(cover)
+  ) %>%
+  ggplot(aes(x = as.factor(n),
+             y = mu,
+             group = model)) +
+  geom_blank() +
+  geom_hline(yintercept = 0.90, alpha = 0.5) +
+  annotate(
+    geom = "rect",
+    xmin = -Inf,
+    xmax = 1.5,
+    ymin = -Inf,
+    ymax = Inf,
+    fill = "grey97",
+    alpha = 0.25
+  ) +
+  annotate(
+    geom = "rect",
+    xmin = 2.5,
+    xmax = 3.5,
+    ymin = -Inf,
+    ymax = Inf,
+    fill = "grey97",
+    alpha = 0.25
+  ) +
+  annotate(
+    geom = "rect",
+    xmin = 4.5,
+    xmax = 5.5,
+    ymin = -Inf,
+    ymax = Inf,
+    fill = "grey97",
+    alpha = 0.25
+  ) +
+  annotate(
+    geom = "rect",
+    xmin = 6.5,
+    xmax = Inf,
+    ymin = -Inf,
+    ymax = Inf,
+    fill = "grey97",
+    alpha = 0.25
+  ) +
+  annotate(
+    geom = 'segment',
+    x = c(1.5, 2.5, 3.5, 4.5, 5.5, 6.5),
+    xend = c(1.5, 2.5, 3.5, 4.5, 5.5, 6.5),
+    y = -Inf,
+    yend = Inf,
+    linetype = "dotted",
+    alpha = 0.1
+  ) +
+  
+  geom_line(position = position_dodge(1),
+            aes(color = model),
+            alpha = 0.5) +
+  scale_y_continuous(limits = c(0.20, 1)) +
+  geom_errorbar(aes(ymax = mu + sd,
+                    ymin = mu - sd),
+                position = position_dodge(1),
+                width = 0.25) +
+  geom_point(position = position_dodge(1),
+             size = 3,
+             color = "black") +
+  geom_point(position = position_dodge(1), size = 2.5,
+             aes(color = model)) +
+  
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(
+      angle = 90,
+      vjust = 0.5,
+      hjust = 1
+    ),
+    panel.grid = element_blank(),
+    legend.title = element_blank(),
+    legend.text.align = 0,
+    legend.position = "top"
+  ) +
+  ylab(expression(paste("Average Coverage (", rho != 0, ")"))) +
+  xlab("Sample Size") +
+  scale_y_continuous(limits = c(0.25, 1),
+                     breaks = seq(.3, 1, 0.1)) +
+  scale_color_manual(
+    values = c("#0072B2", "#CC79A7", "#999999"),
+    labels = c(expression(gamma ~ "= 0.5"),
+               expression(gamma ~ "= 0"),
+               "Non-reg"),
+    breaks  = c("ebic", "bic", "nonreg")
+    
+  )
+
+
+```
+
+
+# Plot 3C
+## Simulation

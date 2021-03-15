@@ -14,7 +14,7 @@ library(ggplot2)
 library(dplyr)
 ```
 
-# Plot 1B
+# Plot 2B
 ## Regularized
 ```{r}
 # true betas
@@ -140,8 +140,11 @@ for(j in 1:3){
   
 }
 
-ideal_situation <- ls_j
-save(ideal_situation, file = "ideal_situation.Rda")
+# commented out to prevent overwriting
+# files in the folder
+
+# ideal_situation <- ls_j
+# save(ideal_situation, file = "ideal_situation.Rda")
 ```
 
 
@@ -205,8 +208,11 @@ for(j in 1:3){
     ls_j[[j]] <- res_dat
 }
 
-ideal_situation_lm <- ls_j
-save(ideal_situation_lm, file = "ideal_situation_lm.Rda")
+# commented out to prevent overwriting
+# files in the folder
+
+# ideal_situation_lm <- ls_j
+# save(ideal_situation_lm, file = "ideal_situation_lm.Rda")
 ```
 
 ## Make Figure: Figure 2B
@@ -231,7 +237,7 @@ dat_new$gamma_new <- factor(
  
 dat_new$n <- as.factor(dat_new$n) 
 
-plot_1B <-
+plot_2B <-
 ggplot(dat_new,
        aes(
          x = as.factor(n),
@@ -293,7 +299,7 @@ ggplot(dat_new,
     
 ```
 
-# Plot 1C
+# Plot 2C
 ## Simulation
 ```{r}
 # true betas
@@ -361,8 +367,11 @@ for(l in 1:length(lambda)) {
   ls_l[[l]] <- res_dat
 }
 
-tc_lambda <- ls_l
-save(tc_lambda, file = "tc_lambda.Rda")
+# # commented out to prevent overwriting
+# files in the folder
+
+# tc_lambda <- ls_l
+# save(tc_lambda, file = "tc_lambda.Rda")
 ```
 
 ## Make Figure: Figure 2C
@@ -370,7 +379,7 @@ save(tc_lambda, file = "tc_lambda.Rda")
 load(file =  "tc_lambda.Rda")
 
 
-plot_1C <-
+plot_2C <-
   do.call(rbind.data.frame, tc_lambda) %>%
   mutate(beta_new =
            rep(c(betas[1:10], 0, seq(
