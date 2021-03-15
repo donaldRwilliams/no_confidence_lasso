@@ -11,6 +11,7 @@ This repo contains code to reproduce the simulations:
 
 * `regression.Rmd`: Multiple regression experiments
 * `network.Rmd`: Partial correlation network experiments
+* `why_it_matters.Rmd`: Illustration of l1 sampling distribution in introduction
 
 The `.Rda` files are the simulation results that were presented
 in the paper.
